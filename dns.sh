@@ -3,7 +3,7 @@
 # Carregando funções base
 source "$PWD/base.sh"
 
-# Procurando um domínio válido
+# Procurando um domínio
 searching_domain(){
     searching_region "$1"
     if [ "$?" -eq 1 ]; then
@@ -12,21 +12,39 @@ searching_domain(){
         echo "Esta função necessita do nome do domínio, inclusive com o ponto no final :)"
         return 1
     elif [ -z "$3" ]; then
-        echo "Este domínio é privado ou público? Opções: true ou false :)"
+        echo "Este domínio é privado? Opções: true ou false :)"
         return 1
     else
-        names=(`aws route53 list-hosted-zones-by-name --region "$1" \
-        | jq -r '.HostedZones[] | select(.Config.PrivateZone=='$3') | .Name'`)
-        found=0
-            for name in "${names[@]}"; do
-                if [ "$2" = "$name" ]; then
-                    found=$((found+1))
-                fi
-            done
-            if [ "$found" -eq 1 ]; then
-                echo -e "\033[0;34m$2 \033[0mé um domínio válido :)"
+        name=$(aws route53 list-hosted-zones-by-name --region "$1" \
+        | jq -r '.HostedZones[] | select(.Name=="'$2'") | select(.Config.PrivateZone=='$3') | .Name')
+            if [ -n "$name" ]; then
+                echo -e "\033[0;34m$2 \033[0mencontrado :)"
             else
-                echo -e "\033[0;31m$2 \033[0mnão é um domínio válido :("
+                echo -e "\033[0;31m$2 \033[0mnão encontrado :("
+                return 1
+            fi
+    fi
+}
+
+# Obtendo o hosted zone ID de um domínio
+getting_hostedzoneid(){
+    searching_region "$1"
+    if [ "$?" -eq 1 ]; then
+        return 1
+    elif [ -z "$2" ]; then
+        echo "Esta função necessita do nome do domínio, inclusive com o ponto no final :)"
+        return 1
+    elif [ -z "$3" ]; then
+        echo "Este domínio é privado? Opções: true ou false :)"
+        return 1
+    else
+        id=$(aws route53 list-hosted-zones-by-name --region "$1" \
+        | jq -r '.HostedZones[] | select(.Name=="'$2'") | select(.Config.PrivateZone=='$3') | .Id' \
+        | cut -d'/' -f3)
+            if [ -n "$id" ]; then
+                echo "\033[0;34m$id \033[0mencontrado :)"
+            else
+                echo "Nenhum ID encontrado :("
                 return 1
             fi
     fi
@@ -41,22 +59,15 @@ searching_entries(){
         echo "Esta função necessita do nome da aplicação :)"
         return 1
     else
-        hostedzoneid=$(aws route53 list-hosted-zones-by-name --region "$1" \
-        | jq -r '.HostedZones[] | select(.Config.PrivateZone=='$3') | select(.Name=="'$2'") | .Id' \
-        | cut -d'/' -f3)
-            if [ -n "$hostedzoneid" ]; then
-                dnsname=$(aws route53 list-resource-record-sets --region "$1" --hosted-zone-id "$hostedzoneid" \
-                | jq -r '.ResourceRecordSets[] | select(.Name=="'$4.$2'") | .Name')
-                    if [ -n "$dnsname" ]; then
-                        echo -e "Entrada \033[0;34m$4 \033[0mencontrada :)"
-                    else
-                        echo -e "Entrada \033[0;31m$4 \033[0mnão encontrada :("
-                        return 1
-                    fi
-            else
-                echo "Ops, algum erro inesperado aconteceu :("
-                return 1
-            fi
+        getting_hostedzoneid "$1" "$2" "$3" >/dev/null 2>&1
+            dnsname=$(aws route53 list-resource-record-sets --region "$1" --hosted-zone-id "$id" \
+            | jq -r '.ResourceRecordSets[] | select(.Name=="'$4.$2'") | .Name')
+                if [ -n "$dnsname" ]; then
+                    echo -e "\033[0;34m$4 \033[0mencontrada :)"
+                else
+                    echo -e "\033[0;31m$4 \033[0mnão encontrada :("
+                    return 1
+                fi
     fi
 }
 
@@ -69,28 +80,29 @@ getting_hostname(){
         echo "Esta aplicação está em Blue/Green? Opções: sim ou não :)"
         return 1
     else
-        hostedzoneid=$(aws route53 list-hosted-zones-by-name --region "$1" \
-        | jq -r '.HostedZones[] | select(.Config.PrivateZone=='$3') | select(.Name=="'$2'") | .Id' \
-        | cut -d'/' -f3)
-            if [ "$5" = "sim" ]; then
+        getting_hostedzoneid "$1" "$2" "$3" >/dev/null 2>&1
+            if [[ "$5" =~ [Ss][Ii][Mm] ]]; then
                 identifier="ECS-BLUE"
-                export hostname=$(aws route53 list-resource-record-sets --region "$1" --hosted-zone-id "$hostedzoneid" \
+                hostname=$(aws route53 list-resource-record-sets --region "$1" --hosted-zone-id "$id" \
                 | jq -r '.ResourceRecordSets[] | select(.Name=="'$4.$2'") | select(.SetIdentifier=="'$identifier'") | .Name')
                     if [ -n "$hostname" ]; then
-                        echo "$hostname"
+                        return 0
                     else
                         echo "Esta aplicação não está em Blue/Green :)"
                         return 1
                     fi
-            else
-                export hostname=$(aws route53 list-resource-record-sets --region "$1" --hosted-zone-id "$hostedzoneid" \
+            elif [[ "$5" =~ [Nn][Ãã][Oo] ]]; then
+                hostname=$(aws route53 list-resource-record-sets --region "$1" --hosted-zone-id "$id" \
                 | jq -r '.ResourceRecordSets[] | select(.Name=="'$4.$2'") | .Name' | uniq)
                     if [ -n "$hostname" ]; then
-                        echo "$hostname"
+                        return 0
                     else
                         echo "Ops, algum erro inesperado aconteceu :("
                         return 1
                     fi
+            else
+                echo "Opção \033[0;31m$5 \033[0minválida :("
+                return 1
             fi
     fi
 }
