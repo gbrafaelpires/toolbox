@@ -145,6 +145,9 @@ preseting_service(){
                 for app in "${apps[@]}"; do
                     if [[ "$app" =~ blue$ ]] || [[ "$app" =~ green$ ]]; then
                         entrie=${app%-*}
+                            if [[ "$entrie" =~ .*ecs.* ]]; then
+                                entrie=${entrie%-*}
+                            fi
                             if [[ "$2" =~ public$ ]]; then
                                 getting_hostname "$1" "$DOMAIN" "false" "$entrie" "sim" >/dev/null 2>&1
                                     if [ "$?" -eq 0 ]; then
